@@ -30,6 +30,8 @@ use crate::tsm::writer::TsmWriter;
 use crate::tsm::ColumnGroupID;
 use crate::{ColumnFileId, LevelId, VnodeId};
 
+
+
 /// Temporary compacting data block meta
 #[derive(Clone)]
 pub(crate) struct CompactingBlockMeta {
@@ -1016,6 +1018,9 @@ pub mod test {
     use crate::tsm::TsmTombstone;
     use crate::{file_utils, ColumnFileId};
 
+    use std::fs::File; // 导入 File 类型
+    use std::io::{self, Write};
+
     pub(crate) async fn write_data_blocks_to_column_file(
         dir: impl AsRef<Path>,
         data: Vec<HashMap<SeriesId, RecordBatch>>,
@@ -1102,6 +1107,38 @@ pub mod test {
     }
 
     /// Compare DataBlocks in path with the expected_Data using assert_eq.
+    // async fn check_column_file(
+    //     dir: impl AsRef<Path>,
+    //     version_edit: VersionEdit,
+    //     expected_data: HashMap<SeriesId, Vec<RecordBatch>>,
+    // ) -> io::Result<()> {  // 返回类型改为 io::Result<>
+    //     let path = get_result_file_path(dir, version_edit);
+    //     let mut data = read_data_blocks_from_column_file(path).await;
+    //     let mut data_series_ids = data.keys().copied().collect::<Vec<_>>();
+    //     data_series_ids.sort_unstable();
+    //     let mut expected_data_series_ids = expected_data.keys().copied().collect::<Vec<_>>();
+    //     expected_data_series_ids.sort_unstable();
+    //     assert_eq!(data_series_ids, expected_data_series_ids);
+    //
+    //     for (k, v) in expected_data.into_iter() {
+    //         println!("test check_column_file");
+    //         let record_batches = data.remove(&k).unwrap();
+    //         println!("v.len(): {}", v.len());
+    //         println!("data_blks.len(): {}", record_batches.len());
+    //
+    //         // 创建文件，并处理 Result
+    //         let mut file = File::create("/tmp/test/output.txt")?; // 使用 ? 解构 Result
+    //
+    //         for (v, data_blc) in v.iter().zip(record_batches.iter()) {
+    //             // 使用 writeln! 宏写入文件内容
+    //             writeln!(file, "v: {:?}\n", v)?;  // 处理 Result
+    //             writeln!(file, "data_blc: {:?}\n", data_blc)?;  // 处理 Result
+    //         }
+    //     }
+    //
+    //     Ok(())
+    // }
+
     async fn check_column_file(
         dir: impl AsRef<Path>,
         version_edit: VersionEdit,

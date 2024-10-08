@@ -1,3 +1,4 @@
+use arrow::buffer::{MutableBuffer, NullBuffer, BooleanBuffer};
 use arrow_array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray,
     TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
@@ -82,6 +83,18 @@ impl Page {
         &self.bytes[16..16 + bitset_len]
     }
 
+    pub fn create_null_buffer(&self) -> NullBuffer {
+        let data_len = decode_be_u64(&self.bytes[4..12]) as usize;
+        let bitset = self.null_bitset_slice();
+
+        let buffer = BooleanBuffer::collect_bool(data_len * 8, |i| {
+            let byte_index = i / 8;
+            let bit_index = i % 8;
+            bitset.get(byte_index).map(|&byte| byte & (1 << bit_index) != 0).unwrap_or(false)
+        });
+        NullBuffer::new(buffer)
+    }
+
     pub fn data_buffer(&self) -> &[u8] {
         let bitset_len = decode_be_u32(&self.bytes[0..4]) as usize;
         &self.bytes[16 + bitset_len..]
@@ -91,7 +104,8 @@ impl Page {
         MutableColumn::data_buf_to_column(
             self.data_buffer(),
             self.meta(),
-            &NullBitset::Ref(self.null_bitset()),
+            // &NullBitset::Ref(self.null_bitset()),
+            &self.create_null_buffer(),
         )
     }
 
