@@ -8,7 +8,7 @@ use arrow_array::builder::{
     BooleanBuilder, Float64Builder, Int64Builder, PrimitiveBuilder, StringBuilder, UInt64Builder,
 };
 
-use arrow_array::{ArrayRef, RecordBatch, BooleanArray, PrimitiveArray};
+use arrow_array::{ArrayRef, RecordBatch, BooleanArray, PrimitiveArray, Int64Array, TimestampSecondArray, TimestampMillisecondArray, TimestampMicrosecondArray, TimestampNanosecondArray};
 use arrow_schema::{Field, Schema, TimeUnit};
 use bytes::Bytes;
 use models::column_data::PrimaryColumnData;
@@ -19,7 +19,7 @@ use snafu::{OptionExt, ResultExt};
 use utils::bitset::{BitSet, NullBitset};
 
 use crate::error::{
-    ArrowSnafu, CommonSnafu, DecodeSnafu, ReadTsmSnafu, TskvResult, UnsupportedDataTypeSnafu,
+    ArrowSnafu, CommonSnafu, DecodeSnafu, ReadTsmSnafu, TskvResult, UnsupportedDataTypeSnafu, TsmPageSnafu
 };
 use crate::file_system::async_filesystem::{LocalFileSystem, LocalFileType};
 use crate::file_system::file::stream_reader::FileStreamReader;
@@ -27,7 +27,7 @@ use crate::file_system::FileSystem;
 use crate::tsm::chunk::Chunk;
 use crate::tsm::chunk_group::{ChunkGroup, ChunkGroupMeta};
 use crate::tsm::codec::{
-    get_bool_codec, get_encoding, get_f64_codec, get_i64_codec, get_str_codec, get_u64_codec,
+    get_bool_codec, get_encoding, get_f64_codec, get_i64_codec, get_str_codec, get_u64_codec, get_ts_codec
 };
 use crate::tsm::footer::Footer;
 use crate::tsm::mutable_column::MutableColumn;
@@ -557,175 +557,118 @@ fn update_nullbits_by_tombstone(
     Ok(null_bitset)
 }
 
+fn new_updata_nullbits_by_tombstone(
+    tomb: &TsmTombstone,
+    series_id: SeriesId,
+    time_range: &TimeRange,
+    page: &Page,
+) -> TskvResult<BitSet> {
+    let time_ranges = tomb.get_overlapped_time_ranges(series_id, page.meta.column.id, time_range);
+    let mut null_bitset = page.null_bitset().to_bitset();
+    for time_range in time_ranges {
+        let start_index = time_column
+            .data()
+            .binary_search_for_i64_col(time_range.min_ts)
+            .map_err(|e| TskvError::ColumnDataError { source: e })?
+            .unwrap_or_else(|x| x);
+        let end_index = time_column
+            .data()
+            .binary_search_for_i64_col(time_range.max_ts)
+            .map_err(|e| TskvError::ColumnDataError { source: e })?
+            .map(|x| x + 1)
+            .unwrap_or_else(|x| x);
+        null_bitset.clear_bits(start_index, end_index);
+    }
+    Ok(null_bitset)
+}
+
+
 pub fn data_buf_to_arrow_array(page: &Page, null_bitset: NullBitset) -> TskvResult<ArrayRef> {
     let num_values = page.meta.num_values as usize;
     let data_buffer = page.data_buffer();
-
-    // let page_null_bit = page.null_bitset();
 
     let buffer = Buffer::from_vec(null_bitset.null_bitset_slice());
     let null_buffer = NullBuffer::new(BooleanBuffer::new(buffer, 0, num_values as usize));
 
     let physical_type = page.desc().column_type.to_physical_type();
     let array: ArrayRef = match physical_type {
-        PhysicalCType::Time(_) | PhysicalCType::Field(PhysicalDType::Integer) => {
+        PhysicalCType::Time(_) => {
             let encoding = get_encoding(data_buffer);
-            let ts_codec = get_i64_codec(encoding);
-            let mut target = Vec::new();
-            ts_codec
-                .decode(data_buffer, &mut target, &null_buffer)
+            let ts_codec = get_ts_codec(encoding);
+            let array_ref = ts_codec
+                .decode(data_buffer, &null_buffer)
                 .context(DecodeSnafu)?;
-            let mut target = target.into_iter();
-            let col_type = page.desc().column_type.clone();
-            match col_type {
-                ColumnType::Time(TimeUnit::Second) => {
-                    let mut builder = PrimitiveBuilder::<TimestampSecondType>::with_capacity(num_values);
-                    for is_null in null_buffer.iter() {
-                        if is_null{
-                            builder.append_value(target.next().unwrap());
-                        }else {
-                            builder.append_null()
-                        }
+            let array = array_ref
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| {
+                    TsmPageSnafu {
+                        reason: "Arrow array is not Int64Array".to_string(),
                     }
-                    let second_array = builder.finish();
-                    Arc::new(second_array)
+                        .build()
+                })?;
+            match page.desc().column_type {
+                ColumnType::Time(TimeUnit::Second) => {
+                    let array: TimestampSecondArray = array.reinterpret_cast();
+                    Arc::new(array)
                 }
                 ColumnType::Time(TimeUnit::Millisecond) => {
-                    let mut builder = PrimitiveBuilder::<TimestampMillisecondType>::new();
-                    for is_null in null_buffer.iter()  {
-                        if is_null{
-                            builder.append_value(target.next().unwrap());
-                        } else {
-                            builder.append_null();
-                        }
-                    }
-                    let milli_array = builder.finish();
-                    Arc::new(milli_array)
+                    let array: TimestampMillisecondArray = array.reinterpret_cast();
+                    Arc::new(array)
                 }
                 ColumnType::Time(TimeUnit::Microsecond) => {
-                    let mut builder = PrimitiveBuilder::<TimestampMicrosecondType>::new();
-                    for is_null in null_buffer.iter() {
-                        if is_null{
-                            builder.append_value(target.next().unwrap());
-                        } else {
-                            builder.append_null();
-                        }
-                    }
-                    let micro_array = builder.finish();
-                    Arc::new(micro_array)
+                    let array: TimestampMicrosecondArray = array.reinterpret_cast();
+                    Arc::new(array)
                 }
                 ColumnType::Time(TimeUnit::Nanosecond) => {
-                    let mut builder = PrimitiveBuilder::<TimestampNanosecondType>::new();
-                    for is_null in null_buffer.iter(){
-                        if is_null{
-                            builder.append_value(target.next().unwrap());
-                        } else {
-                            builder.append_null();
-                        }
-                    }
-                    let nano_array = builder.finish();
-                    Arc::new(nano_array)
-                }
-                ColumnType::Field(ValueType::Integer) => {
-                    let mut builder = Int64Builder::new();
-                    for is_null in null_buffer.iter() {
-                        if is_null{
-                            builder.append_value(target.next().unwrap());
-                        } else {
-                            builder.append_null();
-                        }
-                    }
-                    let int64_array = builder.finish();
-                    Arc::new(int64_array)
+                    let array: TimestampNanosecondArray = array.reinterpret_cast();
+                    Arc::new(array)
                 }
                 _ => {
                     return Err(UnsupportedDataTypeSnafu {
                         dt: format!(
-                            "expect column type biginteger or timestamp, but got column type: {:?}",
-                            col_type
+                            "expect column type timestamp, but got column type: {:?}",
+                            page.desc().column_type
                         ),
                     }
-                    .build());
+                        .build());
                 }
             }
+        }
+        PhysicalCType::Field(PhysicalDType::Integer) => {
+            let encoding = get_encoding(data_buffer);
+            let ts_codec = get_i64_codec(encoding);
+            ts_codec
+                .decode(data_buffer, &null_buffer)
+                .context(DecodeSnafu)?
         }
         PhysicalCType::Field(PhysicalDType::Float) => {
             let encoding = get_encoding(data_buffer);
             let ts_codec = get_f64_codec(encoding);
-            let mut target = Vec::new();
             ts_codec
-                .decode(data_buffer, &mut target, &null_buffer)
-                .context(DecodeSnafu)?;
-            let mut target = target.into_iter();
-            let mut builder = Float64Builder::new();
-            for is_null in null_buffer.iter() {
-                if is_null{
-                    builder.append_value(target.next().unwrap());
-                }else {
-                    builder.append_null();
-                }
-            }
-            let array = builder.finish();
-            Arc::new(array)
+                .decode(data_buffer, &null_buffer)
+                .context(DecodeSnafu)?
         }
         PhysicalCType::Field(PhysicalDType::Unsigned) => {
             let encoding = get_encoding(data_buffer);
             let ts_codec = get_u64_codec(encoding);
-            let mut target = Vec::new();
             ts_codec
-                .decode(data_buffer, &mut target, &null_buffer)
-                .context(DecodeSnafu)?;
-            let mut target = target.into_iter();
-            let mut builder = UInt64Builder::new();
-            for is_null in null_buffer.iter(){
-                if is_null{
-                    builder.append_value(target.next().unwrap());
-                }else {
-                    builder.append_null();
-                }
-            }
-            let array = builder.finish();
-            Arc::new(array)
+                .decode(data_buffer, &null_buffer)
+                .context(DecodeSnafu)?
         }
         PhysicalCType::Field(PhysicalDType::Boolean) => {
             let encoding = get_encoding(data_buffer);
             let ts_codec = get_bool_codec(encoding);
-            let mut target = Vec::new();
             ts_codec
-                .decode(data_buffer, &mut target, &null_buffer)
-                .context(DecodeSnafu)?;
-            let mut target = target.into_iter();
-            let mut builder = BooleanBuilder::new();
-            for is_null in null_buffer.iter() {
-                if is_null {
-                    builder.append_value(target.next().unwrap());
-                }else {
-                    builder.append_null();
-                }
-            }
-            let array = builder.finish();
-            Arc::new(array)
+                .decode(data_buffer, &null_buffer)
+                .context(DecodeSnafu)?
         }
         PhysicalCType::Field(PhysicalDType::String) | PhysicalCType::Tag => {
             let encoding = get_encoding(data_buffer);
             let ts_codec = get_str_codec(encoding);
-            let mut target = Vec::new();
-            let _ = ts_codec
-                .decode(data_buffer, &mut target, &null_buffer)
-                .context(DecodeSnafu);
-            let mut target = target.into_iter();
-            let mut builder = StringBuilder::new();
-            for is_null in null_buffer {
-                if is_null{
-                    let val = target.next().unwrap();
-                    let val = String::from_utf8(val.to_vec()).unwrap();
-                    builder.append_value(val);
-                } else {
-                    builder.append_null();
-                }
-            }
-            let string_array = builder.finish();
-            Arc::new(string_array)
+            ts_codec
+                .decode(data_buffer, &null_buffer)
+                .context(DecodeSnafu)?
         }
         PhysicalCType::Field(PhysicalDType::Unknown) => {
             return Err(UnsupportedDataTypeSnafu {
@@ -738,14 +681,14 @@ pub fn data_buf_to_arrow_array(page: &Page, null_bitset: NullBitset) -> TskvResu
     Ok(array)
 }
 
-// pub fn old_data_buf_to_arrow_array(page: &Page, null_bitset: NullBitset) -> TskvResult<ArrayRef> {
-//     let column = MutableColumn::data_buf_to_column(
-//         page.data_buffer(),
-//         page.meta(),
-//         &NullBitset::Ref(page.null_bitset()),
-//     )?;
-//     let array = column
-//         .to_arrow_array(Some(null_bitset))
-//         .context(ModelSnafu)?;
-//     Ok(array)
-// }
+pub fn old_data_buf_to_arrow_array(page: &Page, null_bitset: NullBitset) -> TskvResult<ArrayRef> {
+    let column = MutableColumn::data_buf_to_column(
+        page.data_buffer(),
+        page.meta(),
+        &NullBitset::Ref(page.null_bitset()),
+    )?;
+    let array = column
+        .to_arrow_array(Some(null_bitset))
+        .context(ModelSnafu)?;
+    Ok(array)
+}

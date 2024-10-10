@@ -105,18 +105,18 @@ impl MutableColumn {
                     .decode(data_buffer, &mut target, null_buffer)
                     .context(DecodeSnafu)?;
 
-                // let mut target = target.into_iter();
-                // for i in 0..null_buffer.len() {
-                //     if null_buffer.get(i) {
-                //         col.push(Some(FieldVal::Integer(target.next().context(
-                //             TsmPageSnafu {
-                //                 reason: "data buffer not enough".to_string(),
-                //             },
-                //         )?)))?;
-                //     } else {
-                //         col.push(None)?;
-                //     }
-                // }
+                let mut target = target.into_iter();
+                for i in 0..null_buffer.len() {
+                    if null_buffer.get(i) {
+                        col.push(Some(FieldVal::Integer(target.next().context(
+                            TsmPageSnafu {
+                                reason: "data buffer not enough".to_string(),
+                            },
+                        )?)))?;
+                    } else {
+                        col.push(None)?;
+                    }
+                }
             }
             PhysicalCType::Field(PhysicalDType::Float) => {
                 let encoding = get_encoding(data_buffer);

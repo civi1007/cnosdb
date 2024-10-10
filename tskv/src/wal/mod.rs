@@ -43,7 +43,8 @@ use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-
+use arrow::buffer::NullBuffer;
+use arrow_array::Array;
 use minivec::MiniVec;
 use models::codec::Encoding;
 use models::meta_data::VnodeId;
@@ -56,6 +57,7 @@ use crate::kv_option::WalOptions;
 use crate::tsm::codec::{get_str_codec, StringCodec};
 pub use crate::wal::reader::print_wal_statistics;
 use crate::{error, file_utils, TskvResult};
+use arrow_array::{ArrayRef, StringArray};
 
 /// 9 = type(1) + sequence(8)
 const WAL_HEADER_LEN: usize = 9;
@@ -247,9 +249,13 @@ impl WalEntryCodec {
 
     pub fn decode(&mut self, data: &[u8]) -> TskvResult<Option<MiniVec<u8>>> {
         self.buffer.truncate(0);
-        self.codec
-            .decode(data, &mut self.buffer)
+        let len = self.buffer.len();
+        let null_bitsets = NullBuffer::new_valid(len);
+        let array = self.codec
+            .decode(data, &null_bitsets)
             .context(error::DecodeSnafu)?;
+        let array = array.as_any().downcast_ref::<StringArray>().unwrap();
+        self.buffer  = unsafe{MiniVec::from_raw_part(array.values().as_ptr())};
         Ok(self.buffer.drain(..).next())
     }
 

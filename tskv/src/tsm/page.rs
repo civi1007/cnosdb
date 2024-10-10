@@ -104,8 +104,7 @@ impl Page {
         MutableColumn::data_buf_to_column(
             self.data_buffer(),
             self.meta(),
-            // &NullBitset::Ref(self.null_bitset()),
-            &self.create_null_buffer(),
+            &NullBitset::Ref(self.null_bitset()),
         )
     }
 

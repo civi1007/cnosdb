@@ -1,10 +1,14 @@
 use std::error::Error;
-
+use arrow_array::builder::Float64Builder;
 use pco::standalone::{simple_decompress, simpler_compress};
 use pco::DEFAULT_COMPRESSION_LEVEL;
 
 use crate::byte_utils::decode_be_f64;
 use crate::tsm::codec::Encoding;
+
+use std::sync::Arc;
+use arrow::buffer::{BooleanBuffer, Buffer, MutableBuffer, NullBuffer};
+use arrow::array::{ArrayRef, Float64Array};
 
 // note: encode/decode adapted from influxdb_iox
 // https://github.com/influxdata/influxdb_iox/tree/main/influxdb_tsm/src/encoders
@@ -355,44 +359,68 @@ const BIT_MASK: [u64; 64] = [
 /// decode decodes the provided slice of bytes into a vector of f64 values.
 pub fn f64_gorilla_decode(
     src: &[u8],
-    dst: &mut Vec<f64>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if src.is_empty() {
-        return Ok(());
+    bit_set: &NullBuffer,
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+    if src.is_empty(){
+        return Ok(Arc::new(Float64Array::from(vec![] as Vec<f64>)));
     }
     let src = &src[1..];
-    decode_with_sentinel(src, dst, SENTINEL)
+    decode_with_sentinel(src, bit_set, SENTINEL)
 }
 
-pub fn f64_pco_decode(src: &[u8], dst: &mut Vec<f64>) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if src.is_empty() {
-        return Ok(());
+pub fn f64_pco_decode(
+    src: &[u8],
+    bit_set: &NullBuffer,
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+    if src.is_empty(){
+        return Ok(Arc::new(Float64Array::from(vec![] as Vec<f64>)));
     }
 
     let src = &src[1..];
-    if src.is_empty() {
-        return Ok(());
+    if src.is_empty(){
+        return Ok(Arc::new(Float64Array::from(vec![] as Vec<f64>)));
     }
 
     let mut decode: Vec<f64> = simple_decompress(src)?;
-    dst.append(&mut decode);
-    Ok(())
+
+    let mut builder = Float64Builder::new();
+
+    let mut iter = decode.into_iter();
+
+    for is_valid in bit_set.iter(){
+        if is_valid{
+            builder.append_value(iter.next().unwrap());
+        }
+        else {
+            builder.append_null();
+        }
+    }
+    let array = builder.finish();
+    Ok(Arc::new(array))
 }
 
 pub fn f64_without_compress_decode(
     src: &[u8],
-    dst: &mut Vec<f64>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if src.is_empty() {
-        return Ok(());
+    bit_set: &NullBuffer,
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+    if src.is_empty(){
+        return Ok(Arc::new(Float64Array::from(vec![] as Vec<f64>)));
     }
 
+    let mut builder = Float64Builder::new();
     let src = &src[1..];
-    let iter = src.chunks(8);
-    for i in iter {
-        dst.push(decode_be_f64(i))
+    let mut iter = src.chunks(8);
+
+    for is_valid in bit_set.iter(){
+        if is_valid{
+            builder.append_value(decode_be_f64(iter.next().unwrap()));
+        }
+        else {
+            builder.append_null();
+        }
     }
-    Ok(())
+    let array = builder.finish();
+    Ok(Arc::new(array))
 }
 
 /// decode decodes a slice of bytes into a vector of floats.
@@ -400,12 +428,15 @@ pub fn f64_without_compress_decode(
 #[allow(clippy::useless_let_if_seq)]
 fn decode_with_sentinel(
     src: &[u8],
-    dst: &mut Vec<f64>,
+    bit_set: &NullBuffer,
     sentinel: u64,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if src.len() < 9 {
-        return Ok(());
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+    if src.is_empty(){
+        return Ok(Arc::new(Float64Array::from(vec![] as Vec<f64>)));
     }
+
+    let mut dst: Vec<f64> = Vec::new();
+    let mut builder = Float64Builder::new();
 
     let mut i = 1; // skip first byte as it's the encoding, which is always gorilla
     let mut buf: [u8; 8] = [0; 8];
@@ -569,7 +600,17 @@ fn decode_with_sentinel(
         }
         dst.push(f64::from_bits(val));
     }
-    Ok(())
+
+    let mut iter = dst.into_iter();
+    for is_valid in bit_set.iter(){
+        if is_valid {
+            builder.append_value(iter.next().unwrap());
+        }else {
+            builder.append_null();
+        }
+    }
+    let array = builder.finish();
+    Ok(Arc::new(array))
 }
 
 #[cfg(test)]
@@ -578,6 +619,9 @@ fn decode_with_sentinel(
 mod tests {
     // use test_helpers::approximately_equal;
 
+    use arrow::buffer::NullBuffer;
+    use arrow_array::Float64Array;
+    use datafusion::physical_plan::sorts::cursor::FieldArray;
     use crate::tsm::codec::float::{
         f64_gorilla_decode, f64_gorilla_encode, f64_pco_decode, f64_pco_encode,
     };
@@ -1785,13 +1829,18 @@ mod tests {
         for test in tests.iter() {
             let mut dst = vec![];
             let src = test.input.clone();
+            let len = src.len();
+            let null_buffer = NullBuffer::new_valid(len);
 
             f64_pco_encode(&src, &mut dst).expect("failed to encode");
 
-            let mut got = vec![];
-            f64_pco_decode(&dst, &mut got).expect("failed to decode");
+            let array_ref = f64_pco_decode(&dst, &null_buffer).expect("failed to decode");
+            let array = array_ref.as_any().downcast_ref::<Float64Array>().expect("Array is not Float64Array");
+
+            let expected = Float64Array::from(src);
+
             // verify got same values back
-            assert_eq!(got, src, "{}", test.name);
+            assert_eq!(array.values(), expected.values(), "{}", test.name);
         }
     }
 }

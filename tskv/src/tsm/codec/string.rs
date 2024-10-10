@@ -1,3 +1,4 @@
+use std::array;
 use std::convert::TryInto;
 use std::error::Error;
 use std::io::Write;
@@ -202,12 +203,11 @@ pub fn str_without_compress_encode(
 /// UTF-8.
 pub fn str_snappy_decode(
     src: &[u8],
-    dst: &mut Vec<MiniVec<u8>>,
     bit_set: &NullBuffer,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // if src.is_empty() {
-    //     return Ok(());
-    // }
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+    if src.is_empty() {
+        return Ok(Arc::new(StringArray::from(vec![] as Vec<String>)));
+    }
     let src = &src[1..];
 
     let mut decoder = snap::raw::Decoder::new();
@@ -218,10 +218,10 @@ pub fn str_snappy_decode(
 
     let num_decoded_bytes = decoded_bytes.len();
     let mut i = 0;
-    let vec_data: &[u8]  = &[0];
-    for is_null in bit_set.iter() {
-        if is_null {
-            dst.push(MiniVec::from(vec_data));
+    let mut builder = StringBuilder::new();
+    for is_valid in bit_set.iter() {
+        if !is_valid {
+            builder.append_null();
             continue;
         }
         if i < num_decoded_bytes {
@@ -239,61 +239,63 @@ pub fn str_snappy_decode(
                 return Err("short buffer".into());
             }
 
-            dst.push(MiniVec::from(&decoded_bytes[lower..upper]));
+            let str_slice = &decoded_bytes[lower..upper];
+            builder.append_value(String::from_utf8(str_slice.to_vec()).unwrap());
 
             // The length of this string plus the length of the variable byte encoded length
             i += length + num_bytes_read;
         }
     }
-    Ok(())
+    let array = builder.finish();
+    Ok(Arc::new(array))
 }
 
 fn split_stream(
     data: &[u8],
-    dst: &mut Vec<MiniVec<u8>>,
     bit_set: &NullBuffer,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
     let len = data.len();
     let mut i = 0;
 
     let vec_data: &[u8] = &[0];
-    for is_null in bit_set.iter() {
-        if is_null {
-            dst.push(MiniVec::from(vec_data));
-            continue;
+    let mut builder = StringBuilder::new();
+    for is_valid in bit_set.iter() {
+        if is_valid {
+            let str_len = decode_be_u64(&data[i..i + 8]);
+            i += 8;
+            let str_len: usize = str_len.try_into()?;
+            let str_slice = &data[i..i + str_len];
+            builder.append_value(String::from_utf8(str_slice.to_vec()).unwrap());
+            i += str_len;
+        }else {
+            builder.append_null();
         }
-        let str_len = decode_be_u64(&data[i..i + 8]);
-        i += 8;
-        let str_len: usize = str_len.try_into()?;
-        dst.push(MiniVec::from(&data[i..i + str_len]));
-        i += str_len;
     }
-    Ok(())
+    let array = builder.finish();
+    Ok(Arc::new(array))
 }
 
 pub fn str_zstd_decode(
     src: &[u8],
-    dst: &mut Vec<MiniVec<u8>>,
     bit_set: &NullBuffer,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // if src.is_empty() {
-    //     return Ok(Arc::new(StringArray::));
-    // }
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+    if src.is_empty() {
+        return Ok(Arc::new(StringArray::from(vec![] as Vec<String>)));
+    }
     let src = &src[1..];
     let mut data = vec![];
 
     zstd::stream::copy_decode(src, &mut data)?;
-    split_stream(&data, dst, bit_set)?;
-    Ok(())
+    let array = split_stream(&data, bit_set)?;
+    Ok(array)
 }
 
 pub fn str_bzip_decode(
     src: &[u8],
-    dst: &mut Vec<MiniVec<u8>>,
     bit_set: &NullBuffer,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
     if src.is_empty() {
-        return Ok(());
+        return Ok(Arc::new(StringArray::from(vec![] as Vec<String>)));
     }
 
     let src = &src[1..];
@@ -302,18 +304,16 @@ pub fn str_bzip_decode(
     decoder.write_all(src).unwrap();
     let data = decoder.finish()?;
 
-    split_stream(&data, dst, bit_set)?;
-
-    Ok(())
+    let array = split_stream(&data, bit_set)?;
+    Ok(array)
 }
 
 pub fn str_gzip_decode(
     src: &[u8],
-    dst: &mut Vec<MiniVec<u8>>,
     bit_set: &NullBuffer,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
     if src.is_empty() {
-        return Ok(());
+        return Ok(Arc::new(StringArray::from(vec![] as Vec<String>)));
     }
 
     let src = &src[1..];
@@ -322,18 +322,17 @@ pub fn str_gzip_decode(
     decoder.write_all(src).unwrap();
     let data = decoder.finish()?;
 
-    split_stream(&data, dst, bit_set)?;
+    let array = split_stream(&data, bit_set)?;
 
-    Ok(())
+    Ok(array)
 }
 
 pub fn str_zlib_decode(
     src: &[u8],
-    dst: &mut Vec<MiniVec<u8>>,
     bit_set: &NullBuffer,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
     if src.is_empty() {
-        return Ok(());
+        return Ok(Arc::new(StringArray::from(vec![] as Vec<String>)));
     }
     let src = &src[1..];
 
@@ -342,229 +341,228 @@ pub fn str_zlib_decode(
     decoder.write_all(src).unwrap();
     let data = decoder.finish()?;
 
-    split_stream(&data, dst, bit_set)?;
+    let array = split_stream(&data, bit_set)?;
 
-    Ok(())
+    Ok(array)
 }
 
 pub fn str_without_compress_decode(
     src: &[u8],
-    dst: &mut Vec<MiniVec<u8>>,
     bit_set: &NullBuffer,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
     if src.is_empty() {
-        return Ok(());
+        return Ok(Arc::new(StringArray::from(vec![] as Vec<String>)));
     }
     let src = &src[1..];
-    split_stream(src, dst, bit_set)?;
+    let array =split_stream(src, bit_set)?;
 
-    Ok(())
+    Ok(array)
 }
 
-// #[cfg(test)]
-// mod tests {
-//
-//     use super::*;
-//
-//     #[test]
-//     fn encode_no_values() {
-//         let src: Vec<&[u8]> = vec![];
-//         let mut dst = vec![];
-//
-//         // check for error
-//         str_snappy_encode(&src, &mut dst).expect("failed to encode src");
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_zlib_encode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_gzip_encode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_zstd_encode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_bzip_encode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_without_compress_encode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//
-//         // verify encoded no values.
-//     }
-//
-//     #[test]
-//     fn encode_single() {
-//         let v1_bytes = b"v1";
-//         let src = vec![&v1_bytes[..]];
-//         let mut dst = vec![];
-//
-//         str_snappy_encode(&src, &mut dst).expect("failed to encode src");
-//         assert_eq!(dst[1..], vec![16, 3, 8, 2, 118, 49]);
-//     }
-//
-//     #[test]
-//     fn encode_multi_compressed() {
-//         let src_strings: Vec<_> = (0..10).map(|i| format!("value {}", i)).collect();
-//         let src: Vec<_> = src_strings.iter().map(|s| s.as_bytes()).collect();
-//         let mut dst = vec![];
-//
-//         str_snappy_encode(&src, &mut dst).expect("failed to encode src");
-//         assert_eq!(
-//             dst[1..],
-//             vec![
-//                 16, 80, 28, 7, 118, 97, 108, 117, 101, 32, 48, 13, 8, 0, 49, 13, 8, 0, 50, 13, 8,
-//                 0, 51, 13, 8, 0, 52, 13, 8, 0, 53, 13, 8, 0, 54, 13, 8, 0, 55, 13, 8, 32, 56, 7,
-//                 118, 97, 108, 117, 101, 32, 57
-//             ]
-//         );
-//     }
-//
-//     #[test]
-//     fn encode_unicode() {
-//         let src = vec!["☃".as_bytes()];
-//         let mut dst = vec![];
-//
-//         str_snappy_encode(&src, &mut dst).expect("failed to encode src");
-//         assert_eq!(dst[1..], vec![16, 4, 12, 3, 226, 152, 131]);
-//     }
-//
-//     #[test]
-//     fn encode_invalid_utf8() {
-//         let src = vec![&[b'\xC0'][..]];
-//         let mut dst = vec![];
-//
-//         str_snappy_encode(&src, &mut dst).expect("failed to encode src");
-//         assert_eq!(dst[1..], vec![16, 2, 4, 1, 192]);
-//     }
-//
-//     #[test]
-//     fn decode_no_values() {
-//         let src: Vec<u8> = vec![];
-//         let mut dst = vec![];
-//
-//         str_snappy_decode(&src, &mut dst).expect("failed to encode src");
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_zlib_decode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_gzip_decode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_zstd_decode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_bzip_decode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//         str_without_compress_decode(&src, &mut dst).unwrap();
-//         assert_eq!(dst.to_vec().len(), 0);
-//     }
-//
-//     #[test]
-//     fn decode_single() {
-//         let src = vec![0, 16, 3, 8, 2, 118, 49];
-//         let mut dst = vec![];
-//
-//         str_snappy_decode(&src, &mut dst).expect("failed to decode src");
-//
-//         let dst_as_strings: Vec<_> = dst
-//             .iter()
-//             .map(|s| std::str::from_utf8(s).unwrap())
-//             .collect();
-//         assert_eq!(dst_as_strings, vec!["v1"]);
-//     }
-//
-//     #[test]
-//     fn decode_multi_compressed() {
-//         let src = vec![
-//             0, 16, 80, 28, 7, 118, 97, 108, 117, 101, 32, 48, 13, 8, 0, 49, 13, 8, 0, 50, 13, 8, 0,
-//             51, 13, 8, 0, 52, 13, 8, 0, 53, 13, 8, 0, 54, 13, 8, 0, 55, 13, 8, 32, 56, 7, 118, 97,
-//             108, 117, 101, 32, 57,
-//         ];
-//         let mut dst = vec![];
-//
-//         str_snappy_decode(&src, &mut dst).expect("failed to decode src");
-//
-//         let dst_as_strings: Vec<_> = dst
-//             .iter()
-//             .map(|s| std::str::from_utf8(s).unwrap())
-//             .collect();
-//         let expected: Vec<_> = (0..10).map(|i| format!("value {}", i)).collect();
-//         assert_eq!(dst_as_strings, expected);
-//     }
-//
-//     #[test]
-//     fn decode_unicode() {
-//         let src = vec![0, 16, 4, 12, 3, 226, 152, 131];
-//         let mut dst = vec![];
-//
-//         str_snappy_decode(&src, &mut dst).expect("failed to decode src");
-//
-//         let dst_as_strings: Vec<_> = dst
-//             .iter()
-//             .map(|s| std::str::from_utf8(s).unwrap())
-//             .collect();
-//         assert_eq!(dst_as_strings, vec!["☃"]);
-//     }
-//
-//     #[test]
-//     fn decode_invalid_utf8() {
-//         let src = vec![0, 16, 2, 4, 1, 192];
-//         let mut dst = vec![];
-//
-//         str_snappy_decode(&src, &mut dst).expect("failed to decode src");
-//         assert_eq!(dst, vec![&[b'\xC0'][..]]);
-//     }
-//
-//     static ALLSTR: [&str; 10] = [
-//         "beijing",
-//         "shanghai",
-//         "guangzhou",
-//         "shenzhen",
-//         "wuhan",
-//         "qingdao",
-//         "beihai",
-//         "nanjing",
-//         "chengdu",
-//         "shijiazhuang",
-//     ];
-//
-//     #[test]
-//     fn test_encode_decode() {
-//         let mut dst = vec![];
-//         let mut got = vec![];
-//
-//         let mut data = vec![];
-//         let mut data_exp: Vec<MiniVec<u8>> = vec![];
-//         for i in ALLSTR {
-//             data.push(i.as_bytes());
-//             data_exp.push(MiniVec::from(i.as_bytes()));
-//         }
-//
-//         str_snappy_encode(&data, &mut dst).unwrap();
-//         str_snappy_decode(&dst, &mut got).unwrap();
-//         assert_eq!(data_exp, got);
-//         dst.clear();
-//         got.clear();
-//
-//         str_gzip_encode(&data, &mut dst).unwrap();
-//         str_gzip_decode(&dst, &mut got).unwrap();
-//         assert_eq!(data_exp, got);
-//         dst.clear();
-//         got.clear();
-//
-//         str_zstd_encode(&data, &mut dst).unwrap();
-//         str_zstd_decode(&dst, &mut got).unwrap();
-//         assert_eq!(data_exp, got);
-//         dst.clear();
-//         got.clear();
-//
-//         str_zlib_encode(&data, &mut dst).unwrap();
-//         str_zlib_decode(&dst, &mut got).unwrap();
-//         assert_eq!(data_exp, got);
-//         dst.clear();
-//         got.clear();
-//
-//         str_bzip_encode(&data, &mut dst).unwrap();
-//         str_bzip_decode(&dst, &mut got).unwrap();
-//         assert_eq!(data_exp, got);
-//         dst.clear();
-//         got.clear();
-//
-//         str_without_compress_encode(&data, &mut dst).unwrap();
-//         str_without_compress_decode(&dst, &mut got).unwrap();
-//         assert_eq!(data_exp, got);
-//     }
-// }
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn encode_no_values() {
+        let src: Vec<&[u8]> = vec![];
+        let mut dst = vec![];
+
+        // check for error
+        str_snappy_encode(&src, &mut dst).expect("failed to encode src");
+        assert_eq!(dst.to_vec().len(), 0);
+        str_zlib_encode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+        str_gzip_encode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+        str_zstd_encode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+        str_bzip_encode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+        str_without_compress_encode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+
+        // verify encoded no values.
+    }
+
+    #[test]
+    fn encode_single() {
+        let v1_bytes = b"v1";
+        let src = vec![&v1_bytes[..]];
+        let mut dst = vec![];
+
+        str_snappy_encode(&src, &mut dst).expect("failed to encode src");
+        assert_eq!(dst[1..], vec![16, 3, 8, 2, 118, 49]);
+    }
+
+    #[test]
+    fn encode_multi_compressed() {
+        let src_strings: Vec<_> = (0..10).map(|i| format!("value {}", i)).collect();
+        let src: Vec<_> = src_strings.iter().map(|s| s.as_bytes()).collect();
+        let mut dst = vec![];
+
+        str_snappy_encode(&src, &mut dst).expect("failed to encode src");
+        assert_eq!(
+            dst[1..],
+            vec![
+                16, 80, 28, 7, 118, 97, 108, 117, 101, 32, 48, 13, 8, 0, 49, 13, 8, 0, 50, 13, 8,
+                0, 51, 13, 8, 0, 52, 13, 8, 0, 53, 13, 8, 0, 54, 13, 8, 0, 55, 13, 8, 32, 56, 7,
+                118, 97, 108, 117, 101, 32, 57
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_unicode() {
+        let src = vec!["☃".as_bytes()];
+        let mut dst = vec![];
+
+        str_snappy_encode(&src, &mut dst).expect("failed to encode src");
+        assert_eq!(dst[1..], vec![16, 4, 12, 3, 226, 152, 131]);
+    }
+
+    #[test]
+    fn encode_invalid_utf8() {
+        let src = vec![&[b'\xC0'][..]];
+        let mut dst = vec![];
+
+        str_snappy_encode(&src, &mut dst).expect("failed to encode src");
+        assert_eq!(dst[1..], vec![16, 2, 4, 1, 192]);
+    }
+
+    #[test]
+    fn decode_no_values() {
+        let src: Vec<u8> = vec![];
+        let mut dst = vec![];
+
+        str_snappy_decode(&src, &mut dst).expect("failed to encode src");
+        assert_eq!(dst.to_vec().len(), 0);
+        str_zlib_decode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+        str_gzip_decode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+        str_zstd_decode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+        str_bzip_decode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+        str_without_compress_decode(&src, &mut dst).unwrap();
+        assert_eq!(dst.to_vec().len(), 0);
+    }
+
+    #[test]
+    fn decode_single() {
+        let src = vec![0, 16, 3, 8, 2, 118, 49];
+        let mut dst = vec![];
+
+        str_snappy_decode(&src, &mut dst).expect("failed to decode src");
+
+        let dst_as_strings: Vec<_> = dst
+            .iter()
+            .map(|s| std::str::from_utf8(s).unwrap())
+            .collect();
+        assert_eq!(dst_as_strings, vec!["v1"]);
+    }
+
+    #[test]
+    fn decode_multi_compressed() {
+        let src = vec![
+            0, 16, 80, 28, 7, 118, 97, 108, 117, 101, 32, 48, 13, 8, 0, 49, 13, 8, 0, 50, 13, 8, 0,
+            51, 13, 8, 0, 52, 13, 8, 0, 53, 13, 8, 0, 54, 13, 8, 0, 55, 13, 8, 32, 56, 7, 118, 97,
+            108, 117, 101, 32, 57,
+        ];
+        let mut dst = vec![];
+
+        str_snappy_decode(&src, &mut dst).expect("failed to decode src");
+
+        let dst_as_strings: Vec<_> = dst
+            .iter()
+            .map(|s| std::str::from_utf8(s).unwrap())
+            .collect();
+        let expected: Vec<_> = (0..10).map(|i| format!("value {}", i)).collect();
+        assert_eq!(dst_as_strings, expected);
+    }
+
+    #[test]
+    fn decode_unicode() {
+        let src = vec![0, 16, 4, 12, 3, 226, 152, 131];
+        let mut dst = vec![];
+
+        str_snappy_decode(&src, &mut dst).expect("failed to decode src");
+
+        let dst_as_strings: Vec<_> = dst
+            .iter()
+            .map(|s| std::str::from_utf8(s).unwrap())
+            .collect();
+        assert_eq!(dst_as_strings, vec!["☃"]);
+    }
+
+    #[test]
+    fn decode_invalid_utf8() {
+        let src = vec![0, 16, 2, 4, 1, 192];
+        let mut dst = vec![];
+
+        str_snappy_decode(&src, &mut dst).expect("failed to decode src");
+        assert_eq!(dst, vec![&[b'\xC0'][..]]);
+    }
+
+    static ALLSTR: [&str; 10] = [
+        "beijing",
+        "shanghai",
+        "guangzhou",
+        "shenzhen",
+        "wuhan",
+        "qingdao",
+        "beihai",
+        "nanjing",
+        "chengdu",
+        "shijiazhuang",
+    ];
+
+    #[test]
+    fn test_encode_decode() {
+        let mut dst = vec![];
+        let mut got = vec![];
+
+        let mut data = vec![];
+        let mut data_exp: Vec<MiniVec<u8>> = vec![];
+        for i in ALLSTR {
+            data.push(i.as_bytes());
+            data_exp.push(MiniVec::from(i.as_bytes()));
+        }
+
+        str_snappy_encode(&data, &mut dst).unwrap();
+        str_snappy_decode(&dst, &mut got).unwrap();
+        assert_eq!(data_exp, got);
+        dst.clear();
+        got.clear();
+
+        str_gzip_encode(&data, &mut dst).unwrap();
+        str_gzip_decode(&dst, &mut got).unwrap();
+        assert_eq!(data_exp, got);
+        dst.clear();
+        got.clear();
+
+        str_zstd_encode(&data, &mut dst).unwrap();
+        str_zstd_decode(&dst, &mut got).unwrap();
+        assert_eq!(data_exp, got);
+        dst.clear();
+        got.clear();
+
+        str_zlib_encode(&data, &mut dst).unwrap();
+        str_zlib_decode(&dst, &mut got).unwrap();
+        assert_eq!(data_exp, got);
+        dst.clear();
+        got.clear();
+
+        str_bzip_encode(&data, &mut dst).unwrap();
+        str_bzip_decode(&dst, &mut got).unwrap();
+        assert_eq!(data_exp, got);
+        dst.clear();
+        got.clear();
+
+        str_without_compress_encode(&data, &mut dst).unwrap();
+        str_without_compress_decode(&dst, &mut got).unwrap();
+        assert_eq!(data_exp, got);
+    }
+}

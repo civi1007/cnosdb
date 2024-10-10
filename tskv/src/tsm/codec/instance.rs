@@ -37,9 +37,8 @@ pub trait TimestampCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>>;
 }
 
 struct NullTimestampCodec();
@@ -52,10 +51,9 @@ impl TimestampCodec for NullTimestampCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        ts_without_compress_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        ts_without_compress_decode(src, bit_set)
     }
 }
 
@@ -69,10 +67,9 @@ impl TimestampCodec for DeltaTsTimestampCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        ts_zigzag_simple8b_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        ts_zigzag_simple8b_decode(src, bit_set)
     }
 }
 
@@ -85,11 +82,10 @@ impl IntegerCodec for DeltaTsTimestampCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
         let codec = self as &dyn TimestampCodec;
-        codec.decode(src, dst, bit_set)
+        codec.decode(src, bit_set)
     }
 }
 
@@ -103,10 +99,9 @@ impl TimestampCodec for QuantileTimestampCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        ts_pco_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        ts_pco_decode(src, bit_set)
     }
 }
 
@@ -115,9 +110,8 @@ pub trait IntegerCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>>;
 }
 
 struct NullIntegerCodec();
@@ -130,10 +124,9 @@ impl IntegerCodec for NullIntegerCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        i64_without_compress_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        i64_without_compress_decode(src, bit_set)
     }
 }
 
@@ -147,10 +140,9 @@ impl IntegerCodec for DeltaIntegerCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         null_buffer: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        i64_zigzag_simple8b_decode(src, dst, null_buffer)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        i64_zigzag_simple8b_decode(src, null_buffer)
     }
 }
 
@@ -163,11 +155,10 @@ impl TimestampCodec for DeltaIntegerCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
         let codec = self as &dyn IntegerCodec;
-        codec.decode(src, dst, bit_set)
+        codec.decode(src, bit_set)
     }
 }
 
@@ -181,10 +172,9 @@ impl IntegerCodec for QuantileIntegerCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<i64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        i64_pco_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        i64_pco_decode(src, bit_set)
     }
 }
 
@@ -193,9 +183,8 @@ pub trait FloatCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<f64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>>;
 }
 
 struct NullFloatCodec();
@@ -208,10 +197,9 @@ impl FloatCodec for NullFloatCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<f64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        f64_without_compress_decode(src, dst)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        f64_without_compress_decode(src, bit_set)
     }
 }
 
@@ -225,10 +213,9 @@ impl FloatCodec for GorillaFloatCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<f64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        f64_gorilla_decode(src, dst)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        f64_gorilla_decode(src, bit_set)
     }
 }
 
@@ -242,10 +229,9 @@ impl FloatCodec for QuantileFloatCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<f64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        f64_pco_decode(src, dst)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        f64_pco_decode(src, bit_set)
     }
 }
 
@@ -254,9 +240,8 @@ pub trait UnsignedCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<u64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>>;
 }
 
 struct NullUnsignedCodec();
@@ -269,10 +254,9 @@ impl UnsignedCodec for NullUnsignedCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<u64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        u64_without_compress_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        u64_without_compress_decode(src, bit_set)
     }
 }
 
@@ -286,10 +270,9 @@ impl UnsignedCodec for DeltaUnsignedCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<u64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        u64_zigzag_simple8b_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        u64_zigzag_simple8b_decode(src, bit_set)
     }
 }
 
@@ -303,10 +286,9 @@ impl UnsignedCodec for QuantileUnsignedCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<u64>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        u64_pco_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        u64_pco_decode(src, bit_set)
     }
 }
 
@@ -315,9 +297,8 @@ pub trait BooleanCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<bool>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>>;
 }
 
 struct NullBooleanCodec();
@@ -330,10 +311,9 @@ impl BooleanCodec for NullBooleanCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<bool>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        bool_without_compress_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        bool_without_compress_decode(src, bit_set)
     }
 }
 
@@ -347,10 +327,9 @@ impl BooleanCodec for BitPackBooleanCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<bool>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        bool_bitpack_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        bool_bitpack_decode(src, bit_set)
     }
 }
 
@@ -359,9 +338,8 @@ pub trait StringCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<MiniVec<u8>>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>>;
 }
 
 struct NullStringCodec();
@@ -374,10 +352,9 @@ impl StringCodec for NullStringCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<MiniVec<u8>>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        str_without_compress_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        str_without_compress_decode(src, bit_set)
     }
 }
 
@@ -391,10 +368,9 @@ impl StringCodec for SnappyStringCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<MiniVec<u8>>,
         bitset: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        str_snappy_decode(src, dst, bitset)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        str_snappy_decode(src, bitset)
     }
 }
 
@@ -408,10 +384,9 @@ impl StringCodec for GzipStringCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<MiniVec<u8>>,
         bitset: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        str_gzip_decode(src, dst, bitset)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        str_gzip_decode(src, bitset)
     }
 }
 
@@ -425,10 +400,9 @@ impl StringCodec for BzipStringCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<MiniVec<u8>>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        str_bzip_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        str_bzip_decode(src, bit_set)
     }
 }
 
@@ -442,10 +416,9 @@ impl StringCodec for ZstdStringCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<MiniVec<u8>>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        str_zstd_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        str_zstd_decode(src, bit_set)
     }
 }
 
@@ -459,10 +432,9 @@ impl StringCodec for ZlibStringCodec {
     fn decode(
         &self,
         src: &[u8],
-        dst: &mut Vec<MiniVec<u8>>,
         bit_set: &NullBuffer,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        str_zlib_decode(src, dst, bit_set)
+    ) -> Result<ArrayRef, Box<dyn Error + Send + Sync>> {
+        str_zlib_decode(src, bit_set)
     }
 }
 
