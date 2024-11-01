@@ -11,6 +11,7 @@ pub mod privilege;
 pub mod role;
 pub mod rsa_utils;
 pub mod user;
+pub mod auth_cache;
 
 define_result!(AuthError);
 

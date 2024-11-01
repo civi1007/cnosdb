@@ -6,7 +6,7 @@ use std::fmt;
 use std::fmt::Display;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use chrono::Local;
 use config::TLSConfig;
@@ -52,7 +52,7 @@ use warp::reject::{MethodNotAllowed, MissingHeader, PayloadTooLarge};
 use warp::reply::Response;
 use warp::{header, reject, Filter, Rejection, Reply};
 
-use super::auth_cache::AuthCache;
+use models::auth::auth_cache::AuthCache;
 use super::header::Header;
 use super::Error as HttpError;
 use crate::http::api_type::{metrics_record_db, HttpApiType};
@@ -114,6 +114,7 @@ impl HttpService {
         mode: ServerMode,
         metrics_register: Arc<MetricsRegister>,
         span_context_extractor: Arc<SpanContextExtractor>,
+        auth_cache: Arc<AuthCache<String, User>>,
     ) -> Self {
         let http_metrics = Arc::new(HttpMetrics::new(&metrics_register));
 
@@ -133,7 +134,7 @@ impl HttpService {
             http_metrics,
             span_context_extractor,
             // TODO(zipper): support the extension of the lease(ttl).
-            write_auth_cache: Arc::new(AuthCache::new(1024, Some(Duration::from_secs(60)))),
+            write_auth_cache: auth_cache,
         }
     }
 

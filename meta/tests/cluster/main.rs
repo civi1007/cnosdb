@@ -223,7 +223,7 @@ mod tests {
         let output = kill_from_part_str("config_8901.toml".to_string());
         assert_eq!(output.status.code(), std::option::Option::Some(0));
         // sleep 3 seconds
-        thread::sleep(time::Duration::from_secs(10));
+        thread::sleep(time::Duration::from_secs(3));
         // check first meta node log
         let output = check_meta_info_metrics("8901".to_string());
         assert_ne!(output.status.code(), std::option::Option::Some(0));
