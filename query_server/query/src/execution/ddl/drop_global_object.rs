@@ -60,7 +60,7 @@ impl DDLDefinitionTask for DropGlobalObjectTask {
                         },
                     });
                 }
-
+                query_state_machine.remove_user_from_cache(name);
                 Ok(Output::Nil(()))
             }
             GlobalObjectType::Tenant => {
