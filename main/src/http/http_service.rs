@@ -28,7 +28,9 @@ use meta::model::MetaRef;
 use metrics::count::U64Counter;
 use metrics::metric_register::MetricsRegister;
 use metrics::prom_reporter::PromReporter;
+use models::auth::auth_cache::AuthCache;
 use models::auth::privilege::{DatabasePrivilege, Privilege, TenantObjectPrivilege};
+use models::auth::user::User;
 use models::error_code::UnknownCodeWithMessage;
 use models::oid::{Identifier, Oid};
 use models::schema::{DEFAULT_CATALOG, DEFAULT_DATABASE};
@@ -115,6 +117,7 @@ pub struct HttpService {
     metrics_register: Arc<MetricsRegister>,
     http_metrics: Arc<HttpMetrics>,
     auto_generate_span: bool,
+    auth_cache: Arc<AuthCache<String, User>>,
 }
 
 impl HttpService {
@@ -128,6 +131,7 @@ impl HttpService {
         mode: ServerMode,
         metrics_register: Arc<MetricsRegister>,
         auto_generate_span: bool,
+        auth_cache: Arc<AuthCache<String, User>>,
     ) -> Self {
         let http_metrics = Arc::new(HttpMetrics::new(&metrics_register));
 
@@ -146,6 +150,7 @@ impl HttpService {
             metrics_register,
             http_metrics,
             auto_generate_span,
+            auth_cache,
         }
     }
 

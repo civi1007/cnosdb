@@ -7,6 +7,8 @@ use memory_pool::MemoryPoolRef;
 use meta::model::meta_admin::AdminMeta;
 use meta::model::MetaRef;
 use metrics::metric_register::MetricsRegister;
+use models::auth::auth_cache::AuthCache;
+use models::auth::user::User;
 use models::utils::build_address;
 use query::instance::make_cnosdbms;
 use snafu::{Backtrace, Snafu};
@@ -146,13 +148,18 @@ impl ServiceBuilder {
         let coord = self
             .create_coord(meta, Some(kv_inst.clone()), self.memory_pool.clone())
             .await;
+        let auth_cache = Arc::new(AuthCache::new(1024, Some(Duration::from_secs(3600))));
+
         let dbms = self
-            .create_dbms(coord.clone(), self.memory_pool.clone())
+            .create_dbms(coord.clone(), self.memory_pool.clone(), auth_cache.clone())
             .await;
 
-        if let Some(http_service) =
-            self.create_http_if_enabled(dbms.clone(), coord.clone(), ServerMode::Store)
-        {
+        if let Some(http_service) = self.create_http_if_enabled(
+            dbms.clone(),
+            coord.clone(),
+            ServerMode::Store,
+            auth_cache.clone(),
+        ) {
             server.add_service(Box::new(http_service));
         }
 
@@ -175,17 +182,23 @@ impl ServiceBuilder {
         let coord = self
             .create_coord(meta, None, self.memory_pool.clone())
             .await;
+        let auth_cache = Arc::new(AuthCache::new(1024, Some(Duration::from_secs(3600))));
         let dbms = self
-            .create_dbms(coord.clone(), self.memory_pool.clone())
+            .create_dbms(coord.clone(), self.memory_pool.clone(), auth_cache.clone())
             .await;
 
-        if let Some(http_service) =
-            self.create_http_if_enabled(dbms.clone(), coord.clone(), ServerMode::Query)
-        {
+        if let Some(http_service) = self.create_http_if_enabled(
+            dbms.clone(),
+            coord.clone(),
+            ServerMode::Query,
+            auth_cache.clone(),
+        ) {
             server.add_service(Box::new(http_service));
         }
 
-        if let Some(flight_sql_service) = self.create_flight_sql_if_enabled(dbms.clone()) {
+        if let Some(flight_sql_service) =
+            self.create_flight_sql_if_enabled(dbms.clone(), auth_cache.clone())
+        {
             server.add_service(Box::new(flight_sql_service));
         }
 
@@ -209,13 +222,17 @@ impl ServiceBuilder {
         let coord = self
             .create_coord(meta, Some(kv_inst.clone()), self.memory_pool.clone())
             .await;
+        let auth_cache = Arc::new(AuthCache::new(1024, Some(Duration::from_secs(3600))));
         let dbms = self
-            .create_dbms(coord.clone(), self.memory_pool.clone())
+            .create_dbms(coord.clone(), self.memory_pool.clone(), auth_cache.clone())
             .await;
 
-        if let Some(http_service) =
-            self.create_http_if_enabled(dbms.clone(), coord.clone(), ServerMode::Bundle)
-        {
+        if let Some(http_service) = self.create_http_if_enabled(
+            dbms.clone(),
+            coord.clone(),
+            ServerMode::Bundle,
+            auth_cache.clone(),
+        ) {
             server.add_service(Box::new(http_service));
         }
 
@@ -223,7 +240,9 @@ impl ServiceBuilder {
             server.add_service(Box::new(grpc_service));
         }
 
-        if let Some(flight_sql_service) = self.create_flight_sql_if_enabled(dbms.clone()) {
+        if let Some(flight_sql_service) =
+            self.create_flight_sql_if_enabled(dbms.clone(), auth_cache.clone())
+        {
             server.add_service(Box::new(flight_sql_service));
         }
 
@@ -280,9 +299,14 @@ impl ServiceBuilder {
         kv
     }
 
-    async fn create_dbms(&self, coord: CoordinatorRef, memory_pool: MemoryPoolRef) -> DBMSRef {
+    async fn create_dbms(
+        &self,
+        coord: CoordinatorRef,
+        memory_pool: MemoryPoolRef,
+        auth_cache: Arc<AuthCache<String, User>>,
+    ) -> DBMSRef {
         let options = tskv::Options::from(&self.config);
-        let dbms = make_cnosdbms(coord, options.clone(), memory_pool)
+        let dbms = make_cnosdbms(coord, options.clone(), memory_pool, auth_cache)
             .await
             .expect("make dbms");
 
@@ -317,6 +341,7 @@ impl ServiceBuilder {
         dbms: DBMSRef,
         coord: CoordinatorRef,
         mode: ServerMode,
+        auth_cache: Arc<AuthCache<String, User>>,
     ) -> Option<HttpService> {
         let default_http_addr = match self.config.service.http_listen_port {
             Some(port) => build_default_address(port),
@@ -347,6 +372,7 @@ impl ServiceBuilder {
             mode,
             self.metrics_register.clone(),
             self.config.trace.auto_generate_span,
+            auth_cache,
         ))
     }
 
@@ -391,7 +417,11 @@ impl ServiceBuilder {
         Some(TcpService::new(coord, default_tcp_addr))
     }
 
-    fn create_flight_sql_if_enabled(&self, dbms: DBMSRef) -> Option<FlightSqlServiceAdapter> {
+    fn create_flight_sql_if_enabled(
+        &self,
+        dbms: DBMSRef,
+        auth_cache: Arc<AuthCache<String, User>>,
+    ) -> Option<FlightSqlServiceAdapter> {
         let default_flight_sql_addr = match self.config.service.flight_rpc_listen_port {
             Some(port) => build_default_address(port),
             None => return None,
@@ -417,6 +447,7 @@ impl ServiceBuilder {
             addr,
             tls_config,
             self.config.trace.auto_generate_span,
+            auth_cache,
         ))
     }
 }

@@ -63,7 +63,7 @@ impl DDLDefinitionTask for AlterUserTask {
                     .context(MetaSnafu)?;
             }
         }
-
+        query_state_machine.remove_user_from_cache(user_name);
         return Ok(Output::Nil(()));
     }
 }
