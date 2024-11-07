@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use config::tskv::{Config, WalConfig};
+use config::tskv::{Config, WalConfig, StorageConfig};
 use serde::{Deserialize, Serialize};
 use utils::duration::{CnosDuration, YEAR_SECOND};
 use utils::precision::Precision;
@@ -320,7 +320,7 @@ impl DatabaseConfigBuilder {
     }
 
     pub fn build(self, config: Config) -> DatabaseConfig {
-        let precision = self.precision.unwrap_or(DatabaseConfig::DEFAULT_PRECISION);
+        let precision = self.precision.unwrap_or(Precision::NS);
         let max_memcache_size = self
             .max_memcache_size
             .unwrap_or(config.cache.max_buffer_size);
@@ -357,11 +357,6 @@ pub struct DatabaseConfig {
 }
 
 impl DatabaseConfig {
-    pub const DEFAULT_PRECISION: Precision = Precision::NS;
-    pub const DEFAULT_MAX_MEMCACHE_SIZE: u64 = 512 * 1024 * 1024;
-    pub const DEFAULT_MEMCACHE_PARTITIONS: u64 = 16;
-    pub const DEFAULT_STRICT_WRITE: bool = false;
-    pub const DEFAULT_MAX_CACHE_READERS: u64 = 32;
 
     pub fn new(
         precision: Precision,
@@ -419,13 +414,13 @@ impl DatabaseConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         DatabaseConfig {
-            precision: DatabaseConfig::DEFAULT_PRECISION,
-            max_memcache_size: DatabaseConfig::DEFAULT_MAX_MEMCACHE_SIZE,
-            memcache_partitions: DatabaseConfig::DEFAULT_MEMCACHE_PARTITIONS,
+            precision: Precision::NS,
+            max_memcache_size: 512 * 1024 * 1024,
+            memcache_partitions: 16,
             wal_max_file_size: WalConfig::default_max_file_size(),
             wal_sync: WalConfig::default_sync(),
-            strict_write: DatabaseConfig::DEFAULT_STRICT_WRITE,
-            max_cache_readers: DatabaseConfig::DEFAULT_MAX_CACHE_READERS,
+            strict_write: StorageConfig::default_strict_write(),
+            max_cache_readers: StorageConfig::default_max_cached_readers() as u64,
         }
     }
 }
